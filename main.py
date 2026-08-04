@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 import database
-from agent import run_agent, compute_kb_hashes, KB_HASHES
+from agent import run_agent, compute_kb_hashes, KB_HASHES, resume_approved_action, cancel_pending_action
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -183,6 +183,11 @@ class ResetRequest(BaseModel):
     patient_id: int
 
 
+class ApproveRequest(BaseModel):
+    pending_id: str
+    action: str  # "approve" or "cancel"
+
+
 @app.on_event("startup")
 def startup():
     database.init_db()
@@ -240,7 +245,7 @@ def chat(req: ChatRequest):
     # Control 3 — Anomaly detection on input
     check_for_anomalies(req.patient_id, req.message, [], request_id)
 
-    response_text, tool_calls = run_agent(
+    response_text, tool_calls, pending_action = run_agent(
         req.patient_id,
         req.message,
         req.conversation_history
@@ -280,6 +285,37 @@ def chat(req: ChatRequest):
         "duration_ms": duration_ms,
     }
     request_logger.info(json.dumps(log_entry))
+
+    return {
+        "response": response_text,
+        "tool_calls": [tc["tool_name"] for tc in tool_calls],
+        "request_id": request_id,
+        "pending_action": pending_action,
+    }
+
+
+@app.post("/approve")
+def approve_action(req: ApproveRequest):
+    request_id = uuid.uuid4().hex[:8]
+    start_time = time.time()
+
+    if req.action == "approve":
+        response_text, tool_calls, _ = resume_approved_action(req.pending_id)
+    else:
+        response_text, tool_calls, _ = cancel_pending_action(req.pending_id)
+
+    response_text = sanitize_output(response_text or "")
+    duration_ms = int((time.time() - start_time) * 1000)
+
+    request_logger.info(json.dumps({
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+        "request_id": request_id,
+        "event": "human_in_the_loop",
+        "action": req.action,
+        "pending_id": req.pending_id,
+        "tool_calls": [tc["tool_name"] for tc in tool_calls],
+        "duration_ms": duration_ms,
+    }))
 
     return {
         "response": response_text,

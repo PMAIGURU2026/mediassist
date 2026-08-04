@@ -245,6 +245,59 @@
         .typing-indicator .dots span:nth-child(2) { animation-delay: 0.2s; }
         .typing-indicator .dots span:nth-child(3) { animation-delay: 0.4s; }
         @keyframes blink { 0%, 20% { opacity: 0.2; } 50% { opacity: 1; } 100% { opacity: 0.2; } }
+
+        /* Human-in-the-loop approval card */
+        .approval-card {
+            align-self: flex-start;
+            background: #fffbeb;
+            border: 1px solid #f59e0b;
+            border-radius: 12px;
+            border-bottom-left-radius: 4px;
+            padding: 16px;
+            max-width: 75%;
+        }
+        .approval-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #92400e;
+            margin-bottom: 6px;
+        }
+        .approval-detail {
+            font-size: 14px;
+            color: #1a2332;
+            margin-bottom: 14px;
+            line-height: 1.5;
+        }
+        .approval-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        .approve-btn {
+            background: #059669;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-size: 13px;
+            font-weight: 500;
+            font-family: 'Inter', sans-serif;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .approve-btn:hover { background: #047857; }
+        .cancel-action-btn {
+            background: white;
+            color: #dc2626;
+            border: 1px solid #dc2626;
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-size: 13px;
+            font-weight: 500;
+            font-family: 'Inter', sans-serif;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .cancel-action-btn:hover { background: #fef2f2; }
     </style>
 </head>
 <body>
@@ -347,8 +400,16 @@
                 });
                 const data = await resp.json();
                 conversationHistory.push({ role: 'user', content: msg });
-                conversationHistory.push({ role: 'assistant', content: data.response });
-                addMessage('assistant', data.response, data.tool_calls || [], data.request_id);
+                if (data.pending_action) {
+                    if (data.response) {
+                        conversationHistory.push({ role: 'assistant', content: data.response });
+                        addMessage('assistant', data.response, data.tool_calls || [], data.request_id);
+                    }
+                    addApprovalCard(data.pending_action);
+                } else {
+                    conversationHistory.push({ role: 'assistant', content: data.response });
+                    addMessage('assistant', data.response, data.tool_calls || [], data.request_id);
+                }
             } catch (e) {
                 addMessage('assistant', 'Sorry, something went wrong. Please try again.', [], null);
             } finally {
@@ -403,6 +464,64 @@
                 addMessage('assistant', 'Session memory has been cleared.', [], null);
             } catch (e) {
                 addMessage('assistant', 'Failed to reset memory.', [], null);
+            }
+        }
+
+        function escapeHtml(text) {
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+        }
+
+        function addApprovalCard(pendingAction) {
+            const container = document.getElementById('chatMessages');
+            const indicator = document.getElementById('typingIndicator');
+
+            const card = document.createElement('div');
+            card.className = 'approval-card';
+            card.id = `approval-${pendingAction.pending_id}`;
+            card.innerHTML = `
+                <div class="approval-title">&#9888;&#65039; Action requires your approval</div>
+                <div class="approval-detail">${escapeHtml(pendingAction.description)}</div>
+                <div class="approval-buttons">
+                    <button class="approve-btn" onclick="handleApproval('${escapeHtml(pendingAction.pending_id)}', 'approve')">Approve</button>
+                    <button class="cancel-action-btn" onclick="handleApproval('${escapeHtml(pendingAction.pending_id)}', 'cancel')">Cancel</button>
+                </div>
+            `;
+            container.insertBefore(card, indicator);
+            scrollToBottom();
+        }
+
+        async function handleApproval(pendingId, action) {
+            const card = document.getElementById(`approval-${pendingId}`);
+            if (card) {
+                card.querySelector('.approval-buttons').innerHTML =
+                    '<span style="color:#6b7c93;font-size:13px;">Processing...</span>';
+            }
+
+            const sendBtn = document.getElementById('sendBtn');
+            sendBtn.disabled = true;
+            document.getElementById('typingIndicator').style.display = 'block';
+            scrollToBottom();
+
+            try {
+                const resp = await fetch('/approve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pending_id: pendingId, action: action })
+                });
+                const data = await resp.json();
+                if (card) card.remove();
+                conversationHistory.push({ role: 'assistant', content: data.response });
+                addMessage('assistant', data.response, data.tool_calls || [], data.request_id);
+            } catch (e) {
+                addMessage('assistant', 'Something went wrong. Please try again.', [], null);
+            } finally {
+                sendBtn.disabled = false;
+                document.getElementById('typingIndicator').style.display = 'none';
+                scrollToBottom();
             }
         }
 
