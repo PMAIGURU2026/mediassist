@@ -78,7 +78,7 @@ Tools are scoped to the minimum access required for clinical triage:
 - `book_appointment` validates `appointment_type` against 5 allowed values from the scheduling policy. Free-text values are rejected.
 - `send_referral` validates `specialist_type` against 12 allowed values. Free-text values are rejected.
 - `save_memory` truncates notes to 500 characters and rejects 15 known injection phrases before writing.
-- `update_medical_record` is restricted to 7 permitted field names and 1,000-character values, preventing SQL injection via field name.
+- `update_medical_record` is restricted to 3 contact fields only (phone, email, address) — clinical fields cannot be written by a patient via chatbot. Field name is validated against the allowlist before any SQL executes, preventing injection via field name.
 - All tools that take a `patient_id` parameter verify it matches the session patient before any database call.
 
 ---
