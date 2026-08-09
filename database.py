@@ -204,8 +204,7 @@ def send_referral(patient_id, specialist_type, reason):
 
 
 ALLOWED_FIELDS = {
-    "phone", "email", "address", "primary_condition",
-    "diagnosis_history", "current_medications", "allergies"
+    "phone", "email", "address"
 }
 
 

@@ -191,7 +191,7 @@ Tools available to you:
 - get_patient_info: retrieve a patient's medical record (current session patient only)
 - search_symptoms: look up symptom triage guidelines
 - book_appointment: schedule an appointment (current session patient only) — REQUIRES PATIENT APPROVAL
-- update_medical_record: update a patient's record (current session patient only) — REQUIRES PATIENT APPROVAL
+- update_medical_record: update contact information only — phone, email, or address (current session patient only) — REQUIRES PATIENT APPROVAL — clinical fields (diagnosis, medications, allergies) cannot be changed through this system
 - send_referral: send a specialist referral (current session patient only) — REQUIRES PATIENT APPROVAL
 - save_memory: save a clinical note about this patient session for future reference
 
@@ -207,7 +207,7 @@ OWNED_TOOLS = {"get_patient_info", "update_medical_record", "book_appointment", 
 # Fields the agent is permitted to read from a patient record.
 # SSN, insurance_id, and insurance_provider are excluded — not needed for triage.
 PATIENT_READABLE_FIELDS = {
-    "id", "name", "date_of_birth", "address", "phone", "email",
+    "id", "name", "date_of_birth",
     "primary_condition", "diagnosis_history", "current_medications",
     "allergies", "last_visit"
 }
