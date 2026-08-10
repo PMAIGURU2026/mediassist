@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 import database
-from agent import run_agent, compute_kb_hashes, KB_HASHES, resume_approved_action, cancel_pending_action
+from agent import run_agent, compute_kb_hashes, KB_HASHES, resume_approved_action, cancel_pending_action, pending_actions
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -248,7 +248,8 @@ def chat(req: ChatRequest):
     response_text, tool_calls, pending_action = run_agent(
         req.patient_id,
         req.message,
-        req.conversation_history
+        req.conversation_history,
+        request_id=request_id
     )
 
     # Control 4 — Tool chain anomaly detection
@@ -286,18 +287,26 @@ def chat(req: ChatRequest):
     }
     request_logger.info(json.dumps(log_entry))
 
-    return {
-        "response": response_text,
-        "tool_calls": [tc["tool_name"] for tc in tool_calls],
-        "request_id": request_id,
-        "pending_action": pending_action,
-    }
+    return JSONResponse(
+        content={
+            "response": response_text,
+            "tool_calls": [tc["tool_name"] for tc in tool_calls],
+            "request_id": request_id,
+            "pending_action": pending_action,
+        },
+        headers={"X-Request-ID": request_id}
+    )
 
 
 @app.post("/approve")
 def approve_action(req: ApproveRequest):
-    request_id = uuid.uuid4().hex[:8]
+    approve_request_id = uuid.uuid4().hex[:8]
     start_time = time.time()
+
+    # Capture original request_id before pending action is consumed
+    original_request_id = None
+    if req.pending_id in pending_actions:
+        original_request_id = pending_actions[req.pending_id].get("request_id")
 
     if req.action == "approve":
         response_text, tool_calls, _ = resume_approved_action(req.pending_id)
@@ -309,7 +318,8 @@ def approve_action(req: ApproveRequest):
 
     request_logger.info(json.dumps({
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-        "request_id": request_id,
+        "request_id": approve_request_id,
+        "original_request_id": original_request_id,
         "event": "human_in_the_loop",
         "action": req.action,
         "pending_id": req.pending_id,
@@ -317,11 +327,14 @@ def approve_action(req: ApproveRequest):
         "duration_ms": duration_ms,
     }))
 
-    return {
-        "response": response_text,
-        "tool_calls": [tc["tool_name"] for tc in tool_calls],
-        "request_id": request_id,
-    }
+    return JSONResponse(
+        content={
+            "response": response_text,
+            "tool_calls": [tc["tool_name"] for tc in tool_calls],
+            "request_id": approve_request_id,
+        },
+        headers={"X-Request-ID": approve_request_id}
+    )
 
 
 @app.post("/reset")

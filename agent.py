@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import uuid
 import hashlib
 import logging
@@ -15,6 +16,7 @@ MODEL = "openrouter/free"
 MAX_ITERATIONS = 10
 
 kb_logger = logging.getLogger("mediassist.kb_integrity")
+agent_logger = logging.getLogger("mediassist.requests")
 
 KB_HASHES = {}
 
@@ -230,10 +232,19 @@ MAX_MEMORY_NOTE_LENGTH = 500
 MAX_RECORD_VALUE_LENGTH = 1000
 
 
-def execute_tool(tool_name, tool_input, patient_id):
+def execute_tool(tool_name, tool_input, patient_id, request_id=""):
     if tool_name in OWNED_TOOLS:
         requested_id = tool_input.get("patient_id")
         if requested_id is not None and requested_id != patient_id:
+            agent_logger.warning(json.dumps({
+                "event": "tool_access_denied",
+                "request_id": request_id,
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                "patient_id": patient_id,
+                "tool_name": tool_name,
+                "requested_patient_id": requested_id,
+                "message": "Patient attempted to access another patient's records"
+            }))
             return f"Access denied: you are not authorized to access records for patient {requested_id}."
 
     if tool_name == "get_patient_info":
@@ -320,7 +331,7 @@ def _describe_pending_action(tool_name, tool_input):
     return tool_name
 
 
-def run_agent(patient_id, user_message, conversation_history):
+def run_agent(patient_id, user_message, conversation_history, request_id=""):
     system_prompt = build_system_prompt(patient_id)
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -358,7 +369,19 @@ def run_agent(patient_id, user_message, conversation_history):
                     "messages": messages,
                     "all_tool_calls": message.tool_calls,
                     "tool_calls_made": tool_calls_made,
+                    "request_id": request_id,
                 }
+
+                agent_logger.info(json.dumps({
+                    "event": "tool_intercepted",
+                    "request_id": request_id,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+                    "patient_id": patient_id,
+                    "tool_name": tc.function.name,
+                    "pending_id": pending_id,
+                    "description": _describe_pending_action(tc.function.name, tool_input),
+                    "message": "High-stakes tool paused for patient approval"
+                }))
 
                 pre_text = message.content or ""
                 return pre_text, tool_calls_made, {
@@ -378,7 +401,7 @@ def run_agent(patient_id, user_message, conversation_history):
             except json.JSONDecodeError:
                 tool_input = {}
 
-            result = execute_tool(tool_name, tool_input, patient_id)
+            result = execute_tool(tool_name, tool_input, patient_id, request_id=request_id)
 
             tool_calls_made.append({
                 "tool_name": tool_name,
@@ -403,6 +426,7 @@ def resume_approved_action(pending_id):
     patient_id = state["patient_id"]
     messages = state["messages"]
     tool_calls_made = state["tool_calls_made"]
+    request_id = state.get("request_id", "")
 
     # Execute the approved tool calls
     for tc in state["all_tool_calls"]:
@@ -412,7 +436,7 @@ def resume_approved_action(pending_id):
         except json.JSONDecodeError:
             tool_input = {}
 
-        result = execute_tool(tool_name, tool_input, patient_id)
+        result = execute_tool(tool_name, tool_input, patient_id, request_id=request_id)
         tool_calls_made.append({
             "tool_name": tool_name,
             "tool_input": tool_input,
@@ -445,7 +469,7 @@ def resume_approved_action(pending_id):
                 tool_input = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
                 tool_input = {}
-            result = execute_tool(tool_name, tool_input, patient_id)
+            result = execute_tool(tool_name, tool_input, patient_id, request_id=request_id)
             tool_calls_made.append({
                 "tool_name": tool_name,
                 "tool_input": tool_input,
@@ -467,6 +491,8 @@ def cancel_pending_action(pending_id):
     state = pending_actions.pop(pending_id)
     messages = state["messages"]
     tool_calls_made = state["tool_calls_made"]
+    # request_id preserved in state for external callers to reference
+    _ = state.get("request_id", "")
 
     # Tell the model every queued tool call was cancelled
     for tc in state["all_tool_calls"]:
