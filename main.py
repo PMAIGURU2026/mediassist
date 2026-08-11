@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -5,6 +6,13 @@ import re
 import time
 import uuid
 from collections import defaultdict
+
+LOG_PATIENT_ID_SALT = os.getenv("LOG_PATIENT_ID_SALT", "mediassist-log-salt-v1")
+
+
+def hash_patient_id(patient_id: int) -> str:
+    raw = f"{LOG_PATIENT_ID_SALT}:{patient_id}"
+    return "pid-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -95,10 +103,10 @@ def validate_output_schema(response: str, trace_id: str, patient_id: int) -> lis
     if violations:
         request_logger.warning(json.dumps({
             "log_schema_version": "1.0",
-            "event": "output_schema_violation",
+            "event_type": "output_schema_violation",
             "trace_id": trace_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-            "patient_id": patient_id,
+            "patient_id_hash": hash_patient_id(patient_id),
             "outcome": "blocked",
             "anomaly_flags": violations,
             "message": "Response contained content violating output schema — redacted before delivery"
@@ -114,10 +122,10 @@ def check_rate_limit(patient_id: int, trace_id: str) -> bool:
     if len(request_counts[patient_id]) > RATE_LIMIT_MAX_REQUESTS:
         request_logger.warning(json.dumps({
             "log_schema_version": "1.0",
-            "event": "rate_limit_exceeded",
+            "event_type": "rate_limit_exceeded",
             "trace_id": trace_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-            "patient_id": patient_id,
+            "patient_id_hash": hash_patient_id(patient_id),
             "outcome": "blocked",
             "anomaly_flags": ["rate_limit_exceeded"],
             "requests_in_window": len(request_counts[patient_id]),
@@ -138,10 +146,10 @@ def check_for_anomalies(patient_id: int, message: str, tool_calls: list, trace_i
         anomaly_counts[patient_id].append(now)
         request_logger.warning(json.dumps({
             "log_schema_version": "1.0",
-            "event": "anomaly_detected",
+            "event_type": "anomaly_detected",
             "trace_id": trace_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-            "patient_id": patient_id,
+            "patient_id_hash": hash_patient_id(patient_id),
             "outcome": "blocked",
             "anomaly_flags": flags,
             "anomalies_in_window": len(anomaly_counts[patient_id]),
@@ -150,10 +158,10 @@ def check_for_anomalies(patient_id: int, message: str, tool_calls: list, trace_i
         if len(anomaly_counts[patient_id]) >= RATE_LIMIT_MAX_ANOMALIES:
             request_logger.warning(json.dumps({
                 "log_schema_version": "1.0",
-                "event": "repeated_injection_alert",
+                "event_type": "repeated_injection_alert",
                 "trace_id": trace_id,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-                "patient_id": patient_id,
+                "patient_id_hash": hash_patient_id(patient_id),
                 "outcome": "blocked",
                 "anomaly_flags": flags,
                 "anomaly_count": len(anomaly_counts[patient_id]),
@@ -167,10 +175,10 @@ def check_tool_call_anomaly(tool_calls: list, trace_id: str, patient_id: int):
     if len(tool_names) >= 3:
         request_logger.warning(json.dumps({
             "log_schema_version": "1.0",
-            "event": "tool_chain_alert",
+            "event_type": "tool_chain_alert",
             "trace_id": trace_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-            "patient_id": patient_id,
+            "patient_id_hash": hash_patient_id(patient_id),
             "outcome": "flagged",
             "anomaly_flags": ["excessive_tool_calls"],
             "tool_sequence": tool_names,
@@ -179,10 +187,10 @@ def check_tool_call_anomaly(tool_calls: list, trace_id: str, patient_id: int):
     if tool_names.count("get_patient_info") >= 2:
         request_logger.warning(json.dumps({
             "log_schema_version": "1.0",
-            "event": "repeated_record_access",
+            "event_type": "repeated_record_access",
             "trace_id": trace_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-            "patient_id": patient_id,
+            "patient_id_hash": hash_patient_id(patient_id),
             "outcome": "flagged",
             "anomaly_flags": ["repeated_record_access"],
             "tool_sequence": tool_names,
@@ -247,11 +255,11 @@ def chat(req: ChatRequest, request: Request):
     if len(req.message) > MAX_MESSAGE_LENGTH:
         request_logger.warning(json.dumps({
             "log_schema_version": "1.0",
-            "event": "input_rejected",
+            "event_type": "input_rejected",
             "trace_id": trace_id,
             "session_id": session_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-            "patient_id": req.patient_id,
+            "patient_id_hash": hash_patient_id(req.patient_id),
             "outcome": "blocked",
             "reason": "message_too_long",
             "input_length": len(req.message),
@@ -294,20 +302,20 @@ def chat(req: ChatRequest, request: Request):
 
     log_entry = {
         "log_schema_version": "1.0",
-        "event": "request_complete",
+        "event_type": "request_complete",
         "trace_id": trace_id,
         "session_id": session_id,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-        "patient_id": req.patient_id,
+        "patient_id_hash": hash_patient_id(req.patient_id),
         "outcome": outcome,
         "input_summary": redact_pii(req.message[:120]),
         "input_length": len(req.message),
         "tool_calls": [
             {
                 "trace_id": trace_id,
-                "event": "tool_call",
+                "event_type": "tool_call",
                 "tool_name": tc["tool_name"],
-                "tool_input": {k: ("[REDACTED]" if k in ("ssn", "password", "api_key") else v)
+                "tool_input": {k: ("[REDACTED]" if k in ("ssn", "password", "api_key", "patient_id") else v)
                                for k, v in tc["tool_input"].items()},
                 "tool_output_summary": redact_pii(tc["tool_output_summary"]),
                 "timestamp": tc.get("timestamp", ""),
@@ -322,6 +330,7 @@ def chat(req: ChatRequest, request: Request):
         "response_length_chars": len(response_text),
         "tool_call_count": len(tool_calls),
         "anomaly_flags": anomaly_flags or [],
+        "token_counts": {"prompt": None, "completion": None, "note": "requires live API response — not available in mock"},
         "model": "openrouter/free",
         "duration_ms": duration_ms,
     }
@@ -359,11 +368,11 @@ def approve_action(req: ApproveRequest):
 
     request_logger.info(json.dumps({
         "log_schema_version": "1.0",
-        "event": "human_in_the_loop",
+        "event_type": "human_in_the_loop",
         "trace_id": approve_trace_id,
         "original_trace_id": original_trace_id,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-        "patient_id": pending_actions.get(req.pending_id, {}).get("patient_id"),
+        "patient_id_hash": hash_patient_id(pending_actions.get(req.pending_id, {}).get("patient_id") or 0),
         "outcome": outcome,
         "action": req.action,
         "pending_id": req.pending_id,

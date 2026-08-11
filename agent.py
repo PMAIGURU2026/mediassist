@@ -238,13 +238,12 @@ def execute_tool(tool_name, tool_input, patient_id, request_id=""):
         if requested_id is not None and requested_id != patient_id:
             agent_logger.warning(json.dumps({
                 "log_schema_version": "1.0",
-                "event": "tool_access_denied",
+                "event_type": "tool_access_denied",
                 "trace_id": request_id,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-                "patient_id": patient_id,
+                "patient_id_hash": "pid-" + hashlib.sha256(f"mediassist-log-salt-v1:{patient_id}".encode()).hexdigest()[:16],
                 "outcome": "blocked",
                 "tool_name": tool_name,
-                "requested_patient_id": requested_id,
                 "anomaly_flags": ["cross_patient_access"],
                 "message": "Patient attempted to access another patient's records"
             }))
@@ -393,10 +392,10 @@ def run_agent(patient_id, user_message, conversation_history, request_id=""):
 
                 agent_logger.info(json.dumps({
                     "log_schema_version": "1.0",
-                    "event": "tool_intercepted",
+                    "event_type": "tool_intercepted",
                     "trace_id": request_id,
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-                    "patient_id": patient_id,
+                    "patient_id_hash": "pid-" + hashlib.sha256(f"mediassist-log-salt-v1:{patient_id}".encode()).hexdigest()[:16],
                     "outcome": "intercepted",
                     "tool_name": tc.function.name,
                     "pending_id": pending_id,
