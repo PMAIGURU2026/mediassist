@@ -237,12 +237,15 @@ def execute_tool(tool_name, tool_input, patient_id, request_id=""):
         requested_id = tool_input.get("patient_id")
         if requested_id is not None and requested_id != patient_id:
             agent_logger.warning(json.dumps({
+                "log_schema_version": "1.0",
                 "event": "tool_access_denied",
-                "request_id": request_id,
+                "trace_id": request_id,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
                 "patient_id": patient_id,
+                "outcome": "blocked",
                 "tool_name": tool_name,
                 "requested_patient_id": requested_id,
+                "anomaly_flags": ["cross_patient_access"],
                 "message": "Patient attempted to access another patient's records"
             }))
             return f"Access denied: you are not authorized to access records for patient {requested_id}."
@@ -389,12 +392,15 @@ def run_agent(patient_id, user_message, conversation_history, request_id=""):
                 }
 
                 agent_logger.info(json.dumps({
+                    "log_schema_version": "1.0",
                     "event": "tool_intercepted",
-                    "request_id": request_id,
+                    "trace_id": request_id,
                     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
                     "patient_id": patient_id,
+                    "outcome": "intercepted",
                     "tool_name": tc.function.name,
                     "pending_id": pending_id,
+                    "anomaly_flags": [],
                     "description": _describe_pending_action(tc.function.name, tool_input),
                     "message": "High-stakes tool paused for patient approval"
                 }))
