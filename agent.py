@@ -315,6 +315,22 @@ def execute_tool(tool_name, tool_input, patient_id, request_id=""):
     return f"Unknown tool: {tool_name}"
 
 
+def _run_tool(tool_name, tool_input, patient_id, request_id=""):
+    """Execute a tool, returning (result, tool_call_record) with per-call timing."""
+    call_start = time.time()
+    call_timestamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    result = execute_tool(tool_name, tool_input, patient_id, request_id=request_id)
+    call_duration_ms = int((time.time() - call_start) * 1000)
+    record = {
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "tool_output_summary": result[:200] if len(result) > 200 else result,
+        "timestamp": call_timestamp,
+        "duration_ms": call_duration_ms,
+    }
+    return result, record
+
+
 def _describe_pending_action(tool_name, tool_input):
     if tool_name == "book_appointment":
         appt_type = tool_input.get("appointment_type", "appointment")
@@ -401,13 +417,8 @@ def run_agent(patient_id, user_message, conversation_history, request_id=""):
             except json.JSONDecodeError:
                 tool_input = {}
 
-            result = execute_tool(tool_name, tool_input, patient_id, request_id=request_id)
-
-            tool_calls_made.append({
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_output_summary": result[:200] if len(result) > 200 else result
-            })
+            result, record = _run_tool(tool_name, tool_input, patient_id, request_id=request_id)
+            tool_calls_made.append(record)
 
             messages.append({
                 "role": "tool",
@@ -436,12 +447,8 @@ def resume_approved_action(pending_id):
         except json.JSONDecodeError:
             tool_input = {}
 
-        result = execute_tool(tool_name, tool_input, patient_id, request_id=request_id)
-        tool_calls_made.append({
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "tool_output_summary": result[:200] if len(result) > 200 else result
-        })
+        result, record = _run_tool(tool_name, tool_input, patient_id, request_id=request_id)
+        tool_calls_made.append(record)
         messages.append({
             "role": "tool",
             "tool_call_id": tc.id,
@@ -469,12 +476,8 @@ def resume_approved_action(pending_id):
                 tool_input = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
                 tool_input = {}
-            result = execute_tool(tool_name, tool_input, patient_id, request_id=request_id)
-            tool_calls_made.append({
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_output_summary": result[:200] if len(result) > 200 else result
-            })
+            result, record = _run_tool(tool_name, tool_input, patient_id, request_id=request_id)
+            tool_calls_made.append(record)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
