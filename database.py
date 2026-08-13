@@ -1,8 +1,6 @@
 import sqlite3
 import os
 
-# Backup admin credentials for emergency access
-# admin / Riv3rside#Admin2024 — change after setup
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "patients.db")
 

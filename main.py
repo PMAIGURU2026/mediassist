@@ -315,7 +315,8 @@ def chat(req: ChatRequest, request: Request):
                 "trace_id": trace_id,
                 "event_type": "tool_call",
                 "tool_name": tc["tool_name"],
-                "tool_input": {k: ("[REDACTED]" if k in ("ssn", "password", "api_key", "patient_id") else v)
+                "tool_input": {k: ("[REDACTED]" if k in ("ssn", "password", "api_key", "patient_id")
+                               else sanitize_output(str(v)))
                                for k, v in tc["tool_input"].items()},
                 "tool_output_summary": redact_pii(tc["tool_output_summary"]),
                 "timestamp": tc.get("timestamp", ""),
